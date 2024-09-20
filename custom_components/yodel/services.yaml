@@ -1,0 +1,20 @@
+name_a_parcel:
+  fields:
+    upi_code:
+      required: true
+      selector:
+        text:
+    nickname:
+      required: true
+      selector:
+        text:
+track_a_parcel:
+  fields:
+    upi_code:
+      required: true
+      selector:
+        text:
+    postcode:
+      required: true
+      selector:
+        text:

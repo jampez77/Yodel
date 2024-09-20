@@ -1,0 +1,17 @@
+{
+    "domain": "yodel",
+    "name": "Yodel",
+    "codeowners": [
+      "@jampez77"
+    ],
+    "config_flow": true,
+    "dependencies": [],
+    "documentation": "https://github.com/jampez77/Yodel/",
+    "homekit": {},
+    "iot_class": "cloud_polling",
+    "issue_tracker": "https://github.com/jampez77/Yodel/issues",
+    "requirements": [],
+    "ssdp": [],
+    "version": "2024.9.0",
+    "zeroconf": []
+  }

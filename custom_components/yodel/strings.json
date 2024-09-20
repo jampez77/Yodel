@@ -1,0 +1,56 @@
+{
+    "config": {
+        "abort": {
+            "already_configured": "Device is already configured"
+        },
+        "error": {
+            "cannot_connect": "Failed to connect",
+            "invalid_auth": "Invalid authentication",
+            "invalid_mfa_code": "Invalid MFA code",
+            "unknown": "Unexpected error"
+        },
+        "step": {
+            "mfa": {
+                "data": {
+                    "mfa_code": "MFA code (6-digits)"
+                },
+                "title": "Enter your Yodel verification code"
+            },
+            "user": {
+                "data": {
+                    "mobile": "Mobile phone number"
+                }
+            }
+        }
+    },
+    "services": {
+        "track_a_parcel": {
+            "fields": {
+                "upi_code": {
+                    "description": "The tracking number from your email, sms or delivery slip.",
+                    "name": "Tracking number"
+                },
+                "postcode": {
+                    "description": "The postcode the parcel is getting delivered to",
+                    "name": "Delivery Postcode"
+                }
+            },
+            "name": "Track a Yodel parcel",
+            "description": "Add a Yodel parcel."
+        },
+        "name_a_parcel": {
+            "fields": {
+                "upi_code": {
+                    "description": "The tracking number from your email, sms or delivery slip.",
+                    "name": "Tracking number"
+                },
+                "nickname": {
+                    "description": "Give the parcel a memorable name.",
+                    "name": "Parcel name"
+                }
+            },
+            "name": "Name a Yodel parcel",
+            "description": "Give a Yodel parcel a memorable name."
+        }
+    }
+}
