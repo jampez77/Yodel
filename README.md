@@ -17,7 +17,7 @@ Enjoying this? Help me out with a :beers: or :coffee:!
 
 ## Installation through [HACS](https://hacs.xyz/)
 
-There is an active [PR](https://github.com/hacs/default/pull/2711) to get this into [HACS](https://hacs.xyz/), once that is merged then you can install the **Yodel** integration by searching for it there in HA instance.
+There is an active [PR](https://github.com/hacs/default/pull/2741) to get this into [HACS](https://hacs.xyz/), once that is merged then you can install the **Yodel** integration by searching for it there in HA instance.
 
 Until then you will have to add this repository manually:
 
