@@ -43,28 +43,6 @@ from .const import (
 from .coordinator import YodelParcelsCoordinator, YodelTrackParcelCoordinator
 
 
-async def remove_unmanaged_entities(hass: HomeAssistant):
-    """Remove entities from Home Assistant that are no longer managed by the integration."""
-    # Get the entity registry
-    entity_registry = er.async_get(hass)
-
-    # Get the list of currently managed entities
-    managed_entities = hass.data.get(DOMAIN, {}).get("managed_entities", set())
-
-    # List to store IDs of entities to be removed
-    entities_to_remove = []
-
-    # Iterate over all entities in the registry
-    for entity_id, entry in entity_registry.entities.items():
-        # Check if the entity belongs to the specified integration and is not managed
-        if entry.platform == DOMAIN and entity_id not in managed_entities:
-            entities_to_remove.append(entity_id)
-
-    # Remove the orphaned entities
-    for entity_id in entities_to_remove:
-        entity_registry.async_remove(entity_id)
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -208,12 +186,34 @@ class TotalParcelsSensor(SensorEntity):
         """Set total parcels icon."""
         return "mdi:package-variant-closed"
 
-    def update_parcels(self, parcels: list, parcels_out_for_delivery: list):
+    def update_parcels(self):
         """Update parcels and re-calculate state."""
-        self.total_parcels = parcels
-        self.parcels_out_for_delivery = parcels_out_for_delivery
-        self.update_state()
-        self.async_write_ha_state()
+        entries = self.hass.config_entries.async_entries(DOMAIN)
+
+        if entries:
+            config_entry = entries[0]
+            parcels = config_entry.data.get(CONF_PARCELS, [])
+
+            parcels_out_for_delivery = [
+                parcel for parcel in parcels if self.is_parcel_delivery_today(parcel)
+            ]
+
+            self.total_parcels = parcels
+            self.parcels_out_for_delivery = parcels_out_for_delivery
+            self.update_state()
+
+            self.async_write_ha_state()
+
+    def is_parcel_delivery_today(self, parcel: dict) -> bool:
+        """Check if the parcel has been delivered."""
+        tracking_events = parcel.get(CONF_TRACKINGEVENTS, [])
+        if tracking_events:
+            most_recent_event = tracking_events[0]
+            lastTrackingEventScanCode = most_recent_event[CONF_TRACKINGEVENTS][0][
+                CONF_SCAN_CODE
+            ]
+            return lastTrackingEventScanCode in DELIVERY_TODAY_EVENTS
+        return False
 
     async def async_remove(self) -> None:
         """Handle the removal of the entity."""
@@ -270,29 +270,79 @@ class YodelParcelSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity):
         self.attrs: dict[str, Any] = {}
         self._available = True
         self._attr_force_update = True
+        self._attr_icon = "mdi:package-variant-closed"
+        self._state = None
 
-    @property
-    def name(self) -> str:
-        """Process name."""
+    def update_from_coordinator(self):
+        """Update sensor state and attributes from coordinator data."""
 
         if self.data[CONF_YODELPARCEL][CONF_NICKNAME] is not None:
-            return self.data[CONF_YODELPARCEL][CONF_NICKNAME]
+            self._name = self.data[CONF_YODELPARCEL][CONF_NICKNAME]
 
-        return super().name
+        if CONF_TRACKINGEVENTS in self.data and len(self.data[CONF_TRACKINGEVENTS]) > 0:
+            lastTrackingEventScanCode = self.data[CONF_TRACKINGEVENTS][0][
+                CONF_SCAN_CODE
+            ]
 
-    async def update_parcel(self) -> None:
-        """Safely update the name of the entity."""
-        await self.coordinator.async_request_refresh()
+            # Notify if the parcel is delivered
+            if lastTrackingEventScanCode in DELIVERY_DELIVERED_EVENTS:
+                self.notify_total_parcels()
 
-        super()._handle_coordinator_update()
+            if lastTrackingEventScanCode in DELIVERY_DELIVERED_EVENTS:
+                self._attr_icon = "mdi:package-variant-closed-check"
+            if lastTrackingEventScanCode in DELIVERY_TODAY_EVENTS:
+                self._attr_icon = "mdi:truck-delivery-outline"
+            if lastTrackingEventScanCode in DELIVERY_TRANSIT_EVENTS:
+                self._attr_icon = "mdi:transit-connection-variant"
+
+        self._state = self.data[CONF_YODELPARCEL][CONF_STATUSMESSAGE]
+
+        attributes = {}
+
+        for key, value in self.data.items():
+            if isinstance(value, dict):
+                attributes.update({f"{key}_{k}": v for k, v in value.items()})
+            else:
+                attributes[key] = value
+
+        self.attrs = attributes
+
+    def notify_total_parcels(self):
+        """Notify the total parcels sensor to update its state."""
+        total_sensor = None
+        for entity in self.hass.data[DOMAIN].values():
+            if isinstance(entity, TotalParcelsSensor):
+                total_sensor = entity
+                break
+
+        if total_sensor:
+            total_sensor.update_parcels()
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        self.data = self.coordinator.data.get(CONF_DATA)[CONF_TRACKPARCEL]
+        self.update_from_coordinator()
+        self.async_write_ha_state()
 
-        if self.data[CONF_YODELPARCEL][CONF_NICKNAME] is not None:
-            self._attr_name = self.data[CONF_YODELPARCEL][CONF_NICKNAME]
+    async def async_added_to_hass(self) -> None:
+        """Handle adding to Home Assistant."""
+        await super().async_added_to_hass()
+        await self.async_update()
+
+    async def async_remove(self) -> None:
+        """Handle the removal of the entity."""
+        # If you have any specific cleanup logic, add it here
+        if self.hass is not None:
+            await super().async_remove()
+
+    @property
+    def name(self) -> str:
+        """Process name."""
+        return self._name
+
+    async def update_parcel(self) -> None:
+        """Safely update the name of the entity."""
+        await self.coordinator.async_request_refresh()
 
         super()._handle_coordinator_update()
 
@@ -304,32 +354,14 @@ class YodelParcelSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity):
     @property
     def icon(self) -> str:
         """Return a representative icon of the timer."""
-        if CONF_TRACKINGEVENTS in self.data and len(self.data[CONF_TRACKINGEVENTS]) > 0:
-            lastTrackingEventScanCode = self.data[CONF_TRACKINGEVENTS][0][
-                CONF_SCAN_CODE
-            ]
-            if lastTrackingEventScanCode in DELIVERY_DELIVERED_EVENTS:
-                return "mdi:package-variant-closed-check"
-            if lastTrackingEventScanCode in DELIVERY_TODAY_EVENTS:
-                return "mdi:truck-delivery-outline"
-            if lastTrackingEventScanCode in DELIVERY_TRANSIT_EVENTS:
-                return "mdi:transit-connection-variant"
-        return "mdi:package-variant-closed"
+        return self._attr_icon
 
     @property
     def native_value(self) -> str | date | None:
         """Native value."""
-        return self.data[CONF_YODELPARCEL][CONF_STATUSMESSAGE]
+        return self._state
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Define entity attributes."""
-        attributes = {}
-
-        for key, value in self.data.items():
-            if isinstance(value, dict):
-                attributes.update({f"{key}_{k}": v for k, v in value.items()})
-            else:
-                attributes[key] = value
-
-        return attributes
+        return self.attrs
