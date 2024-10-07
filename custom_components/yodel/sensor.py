@@ -265,7 +265,7 @@ class YodelParcelSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity):
             name=parcel_code,
             icon="mdi:package-variant-closed-check",
         )
-        self._name = name
+        self._name = self.data[CONF_YODELPARCEL][CONF_UPICODE]
         self._sensor_id = sensor_id
         self.attrs: dict[str, Any] = {}
         self._available = True
