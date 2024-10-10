@@ -14,19 +14,23 @@ from .const import (
     CONF_ACCESSTOKEN,
     CONF_AUTHORIZATION,
     CONF_CONSIGNMENTORUPICODE,
+    CONF_DATA,
     CONF_DEVICEID,
     CONF_MFA_CODE,
     CONF_MOBILE,
     CONF_NICKNAME,
+    CONF_PARCELS,
     CONF_POST,
     CONF_POSTCODE,
     CONF_REFRESH_TOKEN,
     CONF_REFRESHTOKEN,
     CONF_TOKEN,
+    CONF_TRACKPARCEL,
     CONF_UPI_CODE,
     CONF_UPICODE,
     CONF_VARIABLES,
     CONF_YODEL_DEVICE_ID,
+    CONF_YODELPARCEL,
     HOST,
     NAME_PARCEL_POST_BODY,
     PARCELS_POST_BODY,
@@ -66,22 +70,43 @@ class YodelParcelsCoordinator(DataUpdateCoordinator):
         self.access_token = header_data[CONF_ACCESSTOKEN]
         self.refresh_token = header_data[CONF_REFRESHTOKEN]
         self.device_id = header_data[CONF_DEVICEID]
+        self.header_data = header_data
 
     async def _async_update_data(self):
         """Fetch data from API endpoint."""
+        body = {}
+        body[CONF_PARCELS] = []
         try:
             REQUEST_HEADER[CONF_AUTHORIZATION] = f"Bearer {self.access_token}"
             REQUEST_HEADER[CONF_REFRESH_TOKEN] = self.refresh_token
             REQUEST_HEADER[CONF_YODEL_DEVICE_ID] = self.device_id
 
-            resp = await self.session.request(
+            parcelsResp = await self.session.request(
                 method=CONF_POST,
                 url=HOST,
                 headers=REQUEST_HEADER,
                 json=PARCELS_POST_BODY,
             )
 
-            body = await resp.json()
+            parcels = await parcelsResp.json()
+
+            parcels = parcels[CONF_DATA][CONF_PARCELS]
+
+            for parcel in parcels:
+                data = {
+                    CONF_UPI_CODE: parcel[CONF_YODELPARCEL][CONF_UPICODE],
+                    CONF_POSTCODE: parcel[CONF_YODELPARCEL][CONF_POSTCODE],
+                }
+
+                parcelCoordinator = YodelTrackParcelCoordinator(
+                    self.hass, self.session, data, self.header_data
+                )
+
+                await parcelCoordinator.async_refresh()
+
+                parcel_data = parcelCoordinator.data.get(CONF_DATA)[CONF_TRACKPARCEL]
+
+                body[CONF_PARCELS].append(parcel_data)
 
         except InvalidAuth as err:
             raise ConfigEntryAuthFailed from err
@@ -109,7 +134,7 @@ class YodelTrackParcelCoordinator(DataUpdateCoordinator):
             # Name of the data. For logging purposes.
             name="Yodel",
             # Polling interval. Will only be polled if there are subscribers.
-            update_interval=timedelta(minutes=5),
+            update_interval=None,
         )
 
         self.session = session
