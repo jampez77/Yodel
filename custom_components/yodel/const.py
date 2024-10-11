@@ -38,7 +38,7 @@ CONF_TRACKPARCEL = "trackParcel"
 CONF_QUERY = "query"
 CONF_TRACKINGEVENTS = "trackingEvents"
 CONF_SCAN_CODE = "scan_code"
-
+CONF_SCAN_DESCRIPTION = "scan_description"
 PARCEL_DELIVERED = ["ZA"]
 PARCEL_DELIVERY_TODAY = ["ET"]
 PARCEL_IN_TRANSIT = ["A", "QI", "PJ", "1", "BH"]

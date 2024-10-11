@@ -1,6 +1,6 @@
 """Yodel sensor platform."""
 
-from datetime import date, datetime
+from datetime import date
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
@@ -14,7 +14,6 @@ from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
 )
-from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_ACCESSTOKEN,
@@ -26,6 +25,7 @@ from .const import (
     CONF_PARCELS,
     CONF_REFRESHTOKEN,
     CONF_SCAN_CODE,
+    CONF_SCAN_DESCRIPTION,
     CONF_STATUSMESSAGE,
     CONF_TOKEN,
     CONF_TRACKINGEVENTS,
@@ -81,28 +81,13 @@ async def async_setup_entry(
         await parcelsCoordinator.async_config_entry_first_refresh()
 
         parcels = parcelsCoordinator.data
-        parcels_out_for_delivery = []
-        sensors = []
 
-        parcels = parcels[CONF_PARCELS]
+        sensors = [
+            YodelParcelSensor(hass=hass, data=parcel, name=name)
+            for parcel in parcels[CONF_PARCELS]
+        ]
 
-        for parcel in parcels:
-            lastTrackingEventScanCode = parcel[CONF_TRACKINGEVENTS][0][CONF_SCAN_CODE]
-
-            if lastTrackingEventScanCode in PARCEL_DELIVERY_TODAY:
-                parcels_out_for_delivery.append(parcel)
-
-            sensors.append(
-                YodelParcelSensor(
-                    hass=hass,
-                    data=parcel,
-                    name=name,
-                )
-            )
-
-        total_sensor = TotalParcelsSensor(
-            parcelsCoordinator, name, parcels, parcels_out_for_delivery
-        )
+        total_sensor = TotalParcelsSensor(parcelsCoordinator, name)
 
         sensors = [*sensors, total_sensor]
         for sensor in sensors:
@@ -136,17 +121,13 @@ class TotalParcelsSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity)
         self,
         coordinator: DataUpdateCoordinator,
         name: str,
-        parcels: list,
-        parcels_out_for_delivery: list,
     ) -> None:
         """Init."""
         super().__init__(coordinator)
         self.coordinator = coordinator
-        self.total_parcels = parcels
-        self.parcels_out_for_delivery = parcels_out_for_delivery
+        self.total_parcels = self.coordinator.data[CONF_PARCELS]
         self._state = self.get_state()
-        self._name = "Tracked Parcels"
-
+        self._name = "Yodel Parcels"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{name}")},
             manufacturer="Yodel",
@@ -180,14 +161,33 @@ class TotalParcelsSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity)
 
     def update_from_coordinator(self):
         """Update sensor state and attributes from coordinator data."""
+        parcels_out_for_delivery = []
+
+        parcels = self.coordinator.data[CONF_PARCELS]
+
+        self.total_parcels = parcels
+
+        for parcel in parcels:
+            lastTrackingEventScanCode = parcel[CONF_TRACKINGEVENTS][0][CONF_SCAN_CODE]
+
+            if lastTrackingEventScanCode in PARCEL_DELIVERY_TODAY:
+                parcels_out_for_delivery.append(parcel)
+
+            for entity in self.hass.data[DOMAIN].values():
+                if (
+                    isinstance(entity, YodelParcelSensor)
+                    and str(parcel[CONF_YODELPARCEL][CONF_UPICODE]).lower()
+                    in entity.unique_id
+                ):
+                    entity.update_parcel_data(parcel)
 
         self.attrs[CONF_PARCELS] = [
-            parcel[CONF_YODELPARCEL][CONF_UPICODE] for parcel in self.total_parcels
+            parcel[CONF_YODELPARCEL][CONF_UPICODE] for parcel in parcels
         ]
 
         self.attrs[CONF_OUT_FOR_DELIVERY] = [
             parcel[CONF_YODELPARCEL][CONF_UPICODE]
-            for parcel in self.parcels_out_for_delivery
+            for parcel in parcels_out_for_delivery
         ]
 
         self._state = self.get_state()
@@ -257,12 +257,12 @@ class YodelParcelSensor(SensorEntity):
             name=parcel_code,
             icon="mdi:package-variant-closed-check",
         )
-        self._name = self.data[CONF_YODELPARCEL][CONF_UPICODE]
+        self._name = self.update_name()
         self._sensor_id = sensor_id
-        self.attrs: dict[str, Any] = {}
-        self._available = True
-        self._attr_icon = "mdi:package-variant-closed"
-        self._state = None
+        self.attrs = self.update_attributes()
+        self._available = self.update_available()
+        self._attr_icon = self.update_icon()
+        self._state = self.update_state()
 
     async def async_remove(self) -> None:
         """Handle the removal of the entity."""
@@ -270,22 +270,19 @@ class YodelParcelSensor(SensorEntity):
         if self.hass is not None:
             await super().async_remove()
 
-    @property
-    def name(self) -> str:
-        """Process name."""
+    def update_name(self) -> str:
+        """Update name."""
         if self.data[CONF_YODELPARCEL][CONF_NICKNAME] is not None:
             return self.data[CONF_YODELPARCEL][CONF_NICKNAME]
 
-        return self._name
+        return self.data[CONF_YODELPARCEL][CONF_UPICODE]
 
-    @property
-    def available(self) -> bool:
-        """Return if the entity is available."""
+    def update_available(self) -> bool:
+        """Update available."""
         return self.data is not None
 
-    @property
-    def icon(self) -> str:
-        """Return a representative icon of the timer."""
+    def update_icon(self) -> str:
+        """Update Icon."""
         if CONF_TRACKINGEVENTS in self.data and len(self.data[CONF_TRACKINGEVENTS]) > 0:
             lastTrackingEventScanCode = self.data[CONF_TRACKINGEVENTS][0][
                 CONF_SCAN_CODE
@@ -298,16 +295,24 @@ class YodelParcelSensor(SensorEntity):
             if lastTrackingEventScanCode in PARCEL_IN_TRANSIT:
                 return "mdi:transit-connection-variant"
 
-        return self._attr_icon
+        return "mdi:package-variant-closed"
 
-    @property
-    def native_value(self) -> str | date | None:
-        """Native value."""
-        return self.data[CONF_YODELPARCEL][CONF_STATUSMESSAGE]
+    def update_state(self) -> str:
+        """Update State."""
 
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Define entity attributes."""
+        value = self.data[CONF_YODELPARCEL][CONF_STATUSMESSAGE]
+
+        if CONF_TRACKINGEVENTS in self.data and len(self.data[CONF_TRACKINGEVENTS]) > 0:
+            lastTrackingEventScanCode = self.data[CONF_TRACKINGEVENTS][0][
+                CONF_SCAN_CODE
+            ]
+            if lastTrackingEventScanCode not in PARCEL_DELIVERED:
+                value = self.data[CONF_TRACKINGEVENTS][0][CONF_SCAN_DESCRIPTION]
+
+        return value
+
+    def update_attributes(self) -> dict[str, Any]:
+        """Update Attributes."""
         attributes = {}
 
         for key, value in self.data.items():
@@ -317,3 +322,39 @@ class YodelParcelSensor(SensorEntity):
                 attributes[key] = value
 
         return attributes
+
+    def update_parcel_data(self, data):
+        """Update parcel data."""
+        self.data = data
+        self._name = self.update_name()
+        self._available = self.update_available()
+        self._attr_icon = self.update_icon()
+        self._state = self.update_state()
+        self.attrs = self.update_attributes()
+
+        self.async_write_ha_state()
+
+    @property
+    def name(self) -> str:
+        """Process name."""
+        return self.update_name()
+
+    @property
+    def available(self) -> bool:
+        """Return if the entity is available."""
+        return self.update_available()
+
+    @property
+    def icon(self) -> str:
+        """Return a representative icon of the parcel."""
+        return self.update_icon()
+
+    @property
+    def native_value(self) -> str | date | None:
+        """Native value."""
+        return self.update_state()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Define entity attributes."""
+        return self.update_attributes()
