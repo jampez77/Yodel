@@ -39,9 +39,14 @@ CONF_QUERY = "query"
 CONF_TRACKINGEVENTS = "trackingEvents"
 CONF_SCAN_CODE = "scan_code"
 CONF_SCAN_DESCRIPTION = "scan_description"
+CONF_SCAN_DATETIME = "scan_datetime"
 PARCEL_DELIVERED = ["ZA"]
 PARCEL_DELIVERY_TODAY = ["ET"]
 PARCEL_IN_TRANSIT = ["A", "QI", "PJ", "1", "BH"]
+CONF_HIDDENAT = "hiddenAt"
+CONF_STATE = "state"
+CONF_COMPLETED = "completed"
+CONF_COMPLETEDAT = "completedAt"
 
 REQUEST_HEADER_API_KEY = {
     "apiKey": "RGVplG9He66OnnAjnGKz7Ovol9dKbSAr",
@@ -299,4 +304,20 @@ NAME_PARCEL_POST_BODY = {
         }
     """,
     CONF_VARIABLES: {CONF_UPICODE: "{upiCode}", CONF_NICKNAME: "{nickname}"},
+}
+
+HIDE_PARCEL_POST_BODY = {
+    CONF_QUERY: """
+        mutation ($upiCode: String!, $hiddenAt: ISO8601DateTime) {
+            updateYodelParcel(upiCode: $upiCode, hiddenAt: $hiddenAt) {
+                parcel {
+                    upiCode
+                    hiddenAt
+                    __typename
+                }
+                __typename
+            }
+        }
+    """,
+    CONF_VARIABLES: {CONF_UPICODE: "{upiCode}", CONF_HIDDENAT: "{hiddenAt}"},
 }

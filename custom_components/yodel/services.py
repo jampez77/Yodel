@@ -168,7 +168,7 @@ async def name_a_parcel(hass: HomeAssistant, call: ServiceCall) -> None:
         if str(upi_code).lower() in entity_id:
             entity = hass.data[DOMAIN].get(entity_id)
             if isinstance(entity, YodelParcelSensor):
-                await entity.update_parcel()
+                await entity.update_parcel_data(coordinator.data)
                 break
 
     return True

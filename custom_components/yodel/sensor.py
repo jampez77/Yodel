@@ -1,6 +1,6 @@
 """Yodel sensor platform."""
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
 )
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_ACCESSTOKEN,
@@ -25,10 +26,12 @@ from .const import (
     CONF_PARCELS,
     CONF_REFRESHTOKEN,
     CONF_SCAN_CODE,
+    CONF_SCAN_DATETIME,
     CONF_SCAN_DESCRIPTION,
     CONF_STATUSMESSAGE,
     CONF_TOKEN,
     CONF_TRACKINGEVENTS,
+    CONF_UPI_CODE,
     CONF_UPICODE,
     CONF_USER,
     CONF_VERIFYAPPMOBILENUMBER,
@@ -38,7 +41,7 @@ from .const import (
     PARCEL_DELIVERY_TODAY,
     PARCEL_IN_TRANSIT,
 )
-from .coordinator import YodelParcelsCoordinator
+from .coordinator import YodelHideParcelCoordinator, YodelParcelsCoordinator
 
 
 def get_parcel_header_data(data: dict) -> dict:
@@ -56,6 +59,19 @@ def get_parcel_header_data(data: dict) -> dict:
         CONF_REFRESHTOKEN: refresh_token,
         CONF_DEVICEID: device_id,
     }
+
+
+def hasMailPieceExpired(hass: HomeAssistant, expiry_date_raw: str) -> bool:
+    """Check if booking has expired."""
+
+    user_timezone = dt_util.get_time_zone(hass.config.time_zone)
+
+    dt_utc = datetime.strptime(expiry_date_raw, "%Y-%m-%dT%H:%M:%S%z").replace(
+        tzinfo=user_timezone
+    )
+    # Convert the datetime to the default timezone
+    expiry_date = dt_utc.astimezone(user_timezone)
+    return (datetime.today().timestamp() - expiry_date.timestamp()) >= 86400
 
 
 async def async_setup_entry(
@@ -80,12 +96,28 @@ async def async_setup_entry(
 
         await parcelsCoordinator.async_config_entry_first_refresh()
 
-        parcels = parcelsCoordinator.data
+        parcels = list(parcelsCoordinator.data.get(CONF_PARCELS))
+        sensors = []
+        for parcel in parcels:
+            lastTrackingEventScanCode = parcel[CONF_TRACKINGEVENTS][0][CONF_SCAN_CODE]
+            add_entity = True
+            if lastTrackingEventScanCode in PARCEL_DELIVERED:
+                delivered_at = parcel[CONF_TRACKINGEVENTS][0][CONF_SCAN_DATETIME]
+                if hasMailPieceExpired(hass, delivered_at):
+                    add_entity = False
 
-        sensors = [
-            YodelParcelSensor(hass=hass, data=parcel, name=name)
-            for parcel in parcels[CONF_PARCELS]
-        ]
+                    data = {CONF_UPI_CODE: parcel[CONF_YODELPARCEL][CONF_UPICODE]}
+
+                    hideParcelCoordinator = YodelHideParcelCoordinator(
+                        hass, session, data, header_data
+                    )
+
+                    await hideParcelCoordinator.async_refresh()
+
+            if add_entity:
+                sensors.append(YodelParcelSensor(hass=hass, data=parcel, name=name))
+
+        await parcelsCoordinator.async_refresh()
 
         total_sensor = TotalParcelsSensor(parcelsCoordinator, name)
 

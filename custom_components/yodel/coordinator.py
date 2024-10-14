@@ -1,6 +1,6 @@
 """Ryanair Coordinator."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import hashlib
 import logging
 import uuid
@@ -12,10 +12,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     CAPTURE_MOBILE_POST_BODY,
     CONF_ACCESSTOKEN,
+    CONF_ACTIVE,
     CONF_AUTHORIZATION,
     CONF_CONSIGNMENTORUPICODE,
     CONF_DATA,
     CONF_DEVICEID,
+    CONF_HIDDENAT,
     CONF_MFA_CODE,
     CONF_MOBILE,
     CONF_NICKNAME,
@@ -31,6 +33,7 @@ from .const import (
     CONF_VARIABLES,
     CONF_YODEL_DEVICE_ID,
     CONF_YODELPARCEL,
+    HIDE_PARCEL_POST_BODY,
     HOST,
     NAME_PARCEL_POST_BODY,
     PARCELS_POST_BODY,
@@ -81,16 +84,32 @@ class YodelParcelsCoordinator(DataUpdateCoordinator):
             REQUEST_HEADER[CONF_REFRESH_TOKEN] = self.refresh_token
             REQUEST_HEADER[CONF_YODEL_DEVICE_ID] = self.device_id
 
-            parcelsResp = await self.session.request(
+            activeParcelsResp = await self.session.request(
                 method=CONF_POST,
                 url=HOST,
                 headers=REQUEST_HEADER,
                 json=PARCELS_POST_BODY,
             )
 
-            parcels = await parcelsResp.json()
+            activeParcels = await activeParcelsResp.json()
 
-            parcels = parcels[CONF_DATA][CONF_PARCELS]
+            active_parcels = activeParcels[CONF_DATA][CONF_PARCELS]
+
+            PARCELS_POST_BODY[CONF_VARIABLES][CONF_ACTIVE] = False
+
+            historicParcelsResp = await self.session.request(
+                method=CONF_POST,
+                url=HOST,
+                headers=REQUEST_HEADER,
+                json=PARCELS_POST_BODY,
+            )
+
+            historicParcels = await historicParcelsResp.json()
+
+            historic_parcels = historicParcels[CONF_DATA][CONF_PARCELS]
+
+            parcels = list(active_parcels)
+            parcels.extend(x for x in historic_parcels if x not in parcels)
 
             for parcel in parcels:
                 data = {
@@ -104,9 +123,15 @@ class YodelParcelsCoordinator(DataUpdateCoordinator):
 
                 await parcelCoordinator.async_refresh()
 
-                parcel_data = parcelCoordinator.data.get(CONF_DATA)[CONF_TRACKPARCEL]
+                if (
+                    parcelCoordinator.data is not None
+                    and CONF_DATA in parcelCoordinator.data
+                ):
+                    parcel_data = parcelCoordinator.data.get(CONF_DATA)[
+                        CONF_TRACKPARCEL
+                    ]
 
-                body[CONF_PARCELS].append(parcel_data)
+                    body[CONF_PARCELS].append(parcel_data)
 
         except InvalidAuth as err:
             raise ConfigEntryAuthFailed from err
@@ -314,6 +339,63 @@ class YodelParcelNameCoordinator(DataUpdateCoordinator):
                 url=HOST,
                 headers=REQUEST_HEADER,
                 json=NAME_PARCEL_POST_BODY,
+            )
+
+            body = await resp.json()
+
+        except InvalidAuth as err:
+            raise ConfigEntryAuthFailed from err
+        except YodelError as err:
+            raise UpdateFailed(str(err)) from err
+        except ValueError as err:
+            _LOGGER.error("Value error occurred: %s", err)
+            raise UpdateFailed(f"Unexpected response: {err}") from err
+        except Exception as err:
+            _LOGGER.error("Unexpected exception: %s", err)
+            raise UnknownError from err
+        else:
+            return body
+
+
+class YodelHideParcelCoordinator(DataUpdateCoordinator):
+    """Authentication coordinator."""
+
+    def __init__(self, hass: HomeAssistant, session, data, header_data) -> None:
+        """Initialize coordinator."""
+
+        super().__init__(
+            hass,
+            _LOGGER,
+            # Name of the data. For logging purposes.
+            name="Yodel",
+            # Polling interval. Will only be polled if there are subscribers.
+            update_interval=None,
+        )
+
+        self.session = session
+        self.upi_code = data[CONF_UPI_CODE]
+
+        self.access_token = header_data[CONF_ACCESSTOKEN]
+        self.refresh_token = header_data[CONF_REFRESHTOKEN]
+        self.device_id = header_data[CONF_DEVICEID]
+
+    async def _async_update_data(self):
+        """Fetch data from API endpoint."""
+        try:
+            HIDE_PARCEL_POST_BODY[CONF_VARIABLES][CONF_UPICODE] = self.upi_code
+            HIDE_PARCEL_POST_BODY[CONF_VARIABLES][CONF_HIDDENAT] = (
+                datetime.now().strftime("%Y-%m-%dT%H:%M:%S%z")
+            )
+
+            REQUEST_HEADER[CONF_AUTHORIZATION] = f"Bearer {self.access_token}"
+            REQUEST_HEADER[CONF_REFRESH_TOKEN] = self.refresh_token
+            REQUEST_HEADER[CONF_YODEL_DEVICE_ID] = self.device_id
+
+            resp = await self.session.request(
+                method=CONF_POST,
+                url=HOST,
+                headers=REQUEST_HEADER,
+                json=HIDE_PARCEL_POST_BODY,
             )
 
             body = await resp.json()
