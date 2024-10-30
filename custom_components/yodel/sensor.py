@@ -199,6 +199,8 @@ class TotalParcelsSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity)
 
         self.total_parcels = parcels
 
+        session = async_get_clientsession(self.hass)
+
         for parcel in parcels:
             lastTrackingEventScanCode = parcel[CONF_TRACKINGEVENTS][0][CONF_SCAN_CODE]
 
@@ -212,6 +214,21 @@ class TotalParcelsSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity)
                     in entity.unique_id
                 ):
                     entity.update_parcel_data(parcel)
+
+            if lastTrackingEventScanCode in PARCEL_DELIVERED:
+                delivered_at = parcel[CONF_TRACKINGEVENTS][0][CONF_SCAN_DATETIME]
+                if hasMailPieceExpired(self.hass, delivered_at):
+                    entry_data = self.hass.config_entries.async_entries(DOMAIN)[0].data
+
+                    data = {CONF_UPI_CODE: parcel[CONF_YODELPARCEL][CONF_UPICODE]}
+
+                    header_data = get_parcel_header_data(entry_data)
+
+                    hideParcelCoordinator = YodelHideParcelCoordinator(
+                        self.hass, session, data, header_data
+                    )
+
+                    self.hass.add_job(hideParcelCoordinator.async_refresh())
 
         self.attrs[CONF_PARCELS] = [
             parcel[CONF_YODELPARCEL][CONF_UPICODE] for parcel in parcels
